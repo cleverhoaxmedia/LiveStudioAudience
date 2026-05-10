@@ -206,6 +206,14 @@
     .btn-cancel { background: transparent; border: none; color: var(--muted); font-family: var(--ff-body); font-size: 0.85rem; cursor: pointer; }
     .btn-cancel:hover { color: var(--text); }
 
+    .btn-changepw {
+      background: transparent; border: none; color: var(--muted);
+      font-family: var(--ff-body); font-size: 0.78rem; cursor: pointer;
+      letter-spacing: 0.04em; padding: 0.25rem 0.5rem;
+      transition: color 0.15s; align-self: center;
+    }
+    .btn-changepw:hover { color: var(--text); }
+
     .toast { position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%) translateY(100px); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 0.6rem 1.2rem; font-size: 0.85rem; color: var(--text); z-index: 300; transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1), opacity 0.3s; opacity: 0; white-space: nowrap; }
     .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 
@@ -321,6 +329,22 @@
       <span class="threshold-info" id="threshold-info">set size to enable alert</span>
     </div>
   </div>
+  <button class="btn-changepw" onclick="openChangePwModal()">🔑 Change Password</button>
+</div>
+
+<!-- ══ CHANGE PASSWORD MODAL ═══════════════════════════════════════ -->
+<div class="modal-bg" id="changepw-modal-bg">
+  <div class="modal">
+    <div class="modal-icon">🔑</div>
+    <h3>Change Password</h3>
+    <p>Enter and confirm your new backstage password</p>
+    <input class="modal-input" id="new-pw-input" type="password" placeholder="New password" />
+    <input class="modal-input" id="confirm-pw-input" type="password" placeholder="Confirm password"
+           onkeydown="if(event.key==='Enter') changePassword()" />
+    <p class="modal-error" id="changepw-error"></p>
+    <button class="btn-enter" onclick="changePassword()">Update Password</button>
+    <button class="btn-cancel" onclick="closeChangePwModal()">Cancel</button>
+  </div>
 </div>
 
 <!-- ══ PASSWORD MODAL ══════════════════════════════════════════════ -->
@@ -352,7 +376,6 @@ const FIREBASE_CONFIG = {
   appId:             "1:822686569264:web:3bbb555ad0357dab8deef5"
 };
 
-const BACKSTAGE_PASSWORD = "backstage";   // 🔐 change this!
 // ================================================================
 
 firebase.initializeApp(FIREBASE_CONFIG);
@@ -361,6 +384,7 @@ const votesRef    = db.ref('votes');
 const nameRef     = db.ref('performerName');
 const audienceRef = db.ref('audienceSize');
 const roundRef    = db.ref('round');
+const pwHashRef   = db.ref('config/pwHash');
 
 // ── NAV ──────────────────────────────────────────────────────────
 let meterActive    = false;
@@ -374,6 +398,12 @@ function showHome()     { showView('view-home'); }
 function showAudience() { showView('view-audience'); startAudienceListener(); }
 function showMeter()    { showView('view-meter');   startMeterListener(); }
 
+// ── CRYPTO ───────────────────────────────────────────────────────
+async function sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 // ── PASSWORD ─────────────────────────────────────────────────────
 function openPasswordModal() {
   document.getElementById('modal-bg').classList.add('open');
@@ -382,14 +412,44 @@ function openPasswordModal() {
   setTimeout(() => document.getElementById('pw-input').focus(), 120);
 }
 function closeModal() { document.getElementById('modal-bg').classList.remove('open'); }
-function submitPassword() {
+async function submitPassword() {
   const val = document.getElementById('pw-input').value;
-  if (val === BACKSTAGE_PASSWORD) { closeModal(); showMeter(); }
-  else {
+  if (!val) return;
+  const inputHash  = await sha256(val);
+  const snap       = await pwHashRef.once('value');
+  const storedHash = snap.val();
+  if (inputHash === storedHash) {
+    closeModal();
+    showMeter();
+  } else {
     document.getElementById('pw-error').textContent = 'Wrong password — try again.';
     document.getElementById('pw-input').value = '';
     document.getElementById('pw-input').focus();
   }
+}
+
+// ── CHANGE PASSWORD ───────────────────────────────────────────────
+function openChangePwModal() {
+  document.getElementById('changepw-modal-bg').classList.add('open');
+  document.getElementById('new-pw-input').value = '';
+  document.getElementById('confirm-pw-input').value = '';
+  document.getElementById('changepw-error').textContent = '';
+  setTimeout(() => document.getElementById('new-pw-input').focus(), 120);
+}
+function closeChangePwModal() {
+  document.getElementById('changepw-modal-bg').classList.remove('open');
+}
+async function changePassword() {
+  const newPw     = document.getElementById('new-pw-input').value;
+  const confirmPw = document.getElementById('confirm-pw-input').value;
+  const errEl     = document.getElementById('changepw-error');
+  if (!newPw)              { errEl.textContent = 'Please enter a new password.'; return; }
+  if (newPw.length < 4)   { errEl.textContent = 'Password must be at least 4 characters.'; return; }
+  if (newPw !== confirmPw) { errEl.textContent = "Passwords don't match."; return; }
+  const hash = await sha256(newPw);
+  await pwHashRef.set(hash);
+  closeChangePwModal();
+  showToast('✅ Password updated!');
 }
 
 // ── VOTE STORAGE (round-aware) ────────────────────────────────────
